@@ -1021,7 +1021,7 @@ bool SQLite::export_to_json(String export_path)
 }
 
 
-String SQLite::export_to_json_text(String export_path)
+String SQLite::export_to_json_text()
 {
     /* Get all names and sql templates for all tables present in the database */
     query(String("SELECT name,sql,type FROM sqlite_master WHERE type = 'table' OR type = 'trigger';"));
