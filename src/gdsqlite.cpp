@@ -27,6 +27,8 @@ void SQLite::_bind_methods()
 
     ClassDB::bind_method(D_METHOD("import_from_json", "import_path"), &SQLite::import_from_json);
     ClassDB::bind_method(D_METHOD("export_to_json", "export_path"), &SQLite::export_to_json);
+	
+	ClassDB::bind_method(D_METHOD("export_to_json_text"), &SQLite::export_to_json_text);
 
     ClassDB::bind_method(D_METHOD("get_autocommit"), &SQLite::get_autocommit);
 
@@ -1017,6 +1019,75 @@ bool SQLite::export_to_json(String export_path)
 
     return true;
 }
+
+
+String SQLite::export_to_json_text(String export_path)
+{
+    /* Get all names and sql templates for all tables present in the database */
+    query(String("SELECT name,sql,type FROM sqlite_master WHERE type = 'table' OR type = 'trigger';"));
+    int64_t number_of_objects = query_result.size();
+    TypedArray<Dictionary> database_array = query_result.duplicate(true);
+    /* Construct a Dictionary for each table, convert it to JSON and write it to file */
+    for (int64_t i = 0; i <= number_of_objects - 1; i++)
+    {
+        Dictionary object_dict = database_array[i];
+
+        if (object_dict["type"] == String("table"))
+        {
+            String object_name = object_dict["name"];
+            String query_string;
+
+            query_string = "SELECT * FROM " + (const String &)object_name + ";";
+            query(query_string);
+
+            /* Encode all columns of type PoolByteArray to base64 */
+            if (!query_result.is_empty())
+            {
+                /* First identify the columns that are of this type! */
+                Array base64_columns = Array();
+                Dictionary initial_row = query_result[0];
+                Array keys = initial_row.keys();
+                for (int k = 0; k <= keys.size() - 1; k++)
+                {
+                    String key = keys[k];
+                    Variant value = initial_row[key];
+                    if (value.get_type() == Variant::PACKED_BYTE_ARRAY)
+                    {
+                        base64_columns.append(key);
+                    }
+                }
+
+                /* Now go through all the rows and encode the relevant columns */
+                for (int k = 0; k <= base64_columns.size() - 1; k++)
+                {
+                    String key = base64_columns[k];
+                    for (int j = 0; j <= query_result.size() - 1; j++)
+                    {
+                        Dictionary row = query_result[j];
+                        PackedByteArray arr = ((const PackedByteArray &)row[key]);
+                        String encoded_string = Marshalls::get_singleton()->raw_to_base64(arr);
+
+                        row.erase(key);
+                        row[key] = encoded_string;
+                    }
+                }
+
+                if (!base64_columns.is_empty())
+                {
+                    object_dict["base64_columns"] = base64_columns;
+                }
+            }
+            object_dict["row_array"] = query_result.duplicate(true);
+        }
+    }
+
+    
+    Ref<JSON> json;
+    json.instantiate();
+    String json_string = json->stringify(database_array, "\t");
+    return json_string;
+}
+
 
 bool SQLite::validate_json(const Array &database_array, std::vector<object_struct> &objects_to_import)
 {
