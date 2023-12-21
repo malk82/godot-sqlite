@@ -57,7 +57,7 @@ namespace godot
         static void _bind_methods();
 
     public:
-        // Constants.
+        // Constants. OK HERE
         enum VerbosityLevel
         {
             QUIET = 0,
