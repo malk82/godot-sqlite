@@ -28,6 +28,7 @@ void SQLite::_bind_methods()
     ClassDB::bind_method(D_METHOD("import_from_json", "import_path"), &SQLite::import_from_json);
     ClassDB::bind_method(D_METHOD("export_to_json", "export_path"), &SQLite::export_to_json);
 	
+	ClassDB::bind_method(D_METHOD("import_from_json_text", "json_string"), &SQLite::import_from_json_text);
 	ClassDB::bind_method(D_METHOD("export_to_json_text"), &SQLite::export_to_json_text);
 
     ClassDB::bind_method(D_METHOD("get_autocommit"), &SQLite::get_autocommit);
@@ -1020,6 +1021,115 @@ bool SQLite::export_to_json(String export_path)
     return true;
 }
 
+bool SQLite::import_from_json_text(String json_string)
+{
+    /* Attempt to parse the result and, if unsuccessful, throw a parse error specifying the erroneous line */
+    Ref<JSON> json;
+    json.instantiate();
+    Error error = json->parse(json_string);
+    if (error != Error::OK)
+    {
+        /* Throw a parsing error */
+        // TODO: Figure out how to cast a int32_t to a Godot String using the new API
+        UtilityFunctions::printerr("GDSQLite Error: parsing failed! reason: " + json->get_error_message() + ", at line: ???");
+        //GODOT_LOG(2, "GDSQLite Error: parsing failed! reason: " + result->get_error_string() + ", at line: " + String::num_int64(result->get_error_line()))
+        return false;
+    }
+    Array database_array = json->get_data();
+    std::vector<object_struct> objects_to_import;
+    /* Validate the json structure and populate the tables_to_import vector */
+    if (!validate_json(database_array, objects_to_import))
+    {
+        return false;
+    }
+
+    /* Check if the database is open and, if not, attempt to open it */
+    if (db == nullptr)
+    {
+        /* Open the database using the open_db method */
+        if (!open_db())
+        {
+            return false;
+        }
+    }
+
+    /* Find all tables that are present in this database */
+    /* We don't care about triggers here since they get dropped automatically when their table is dropped */
+    query(String("SELECT name FROM sqlite_master WHERE type = 'table';"));
+    TypedArray<Dictionary> old_database_array = query_result.duplicate(true);
+    int64_t old_number_of_tables = query_result.size();
+    /* Drop all old tables present in the database */
+    for (int64_t i = 0; i <= old_number_of_tables - 1; i++)
+    {
+        Dictionary table_dict = old_database_array[i];
+        String table_name = table_dict["name"];
+
+        drop_table(table_name);
+    }
+
+    query("BEGIN TRANSACTION;");
+    /* foreign_keys cannot be enforced until after all rows have been added! */
+    query("PRAGMA defer_foreign_keys=on;");
+    /* Add all new tables and fill them up with all the rows */
+    for (auto table : objects_to_import)
+    {
+        if (!query(table.sql))
+        {
+            /* Don't forget to close the transaction! */
+            /* Stop the error_message from being overwritten! */
+            String previous_error_message = error_message;
+            query("END TRANSACTION;");
+            error_message = previous_error_message;
+        }
+    }
+
+    for (auto object : objects_to_import)
+    {
+        if (object.type != TABLE)
+        {
+            /* The object is a trigger and doesn't have any rows! */
+            continue;
+        }
+
+        /* Convert the base64-encoded columns back to raw data */
+        for (int64_t i = 0; i <= object.base64_columns.size() - 1; i++)
+        {
+            String key = object.base64_columns[i];
+            for (int64_t j = 0; j <= object.row_array.size() - 1; j++)
+            {
+                Dictionary row = object.row_array[j];
+
+                if (row.has(key))
+                {
+                    String encoded_string = ((const String &)row[key]);
+                    PackedByteArray arr = Marshalls::get_singleton()->base64_to_raw(encoded_string);
+                    row[key] = arr;
+                }
+            }
+        }
+
+        int64_t number_of_rows = object.row_array.size();
+        for (int64_t i = 0; i <= number_of_rows - 1; i++)
+        {
+            if (object.row_array[i].get_type() != Variant::DICTIONARY)
+            {
+                UtilityFunctions::printerr("GDSQLite Error: All elements of the Array should be of type Dictionary");
+                return false;
+            }
+            if (!insert_row(object.name, object.row_array[i]))
+            {
+                /* Don't forget to close the transaction! */
+                /* Stop the error_message from being overwritten! */
+                String previous_error_message = error_message;
+                query("END TRANSACTION;");
+                error_message = previous_error_message;
+                return false;
+            }
+        }
+    }
+    query("END TRANSACTION;");
+    return true;
+}
 
 String SQLite::export_to_json_text()
 {

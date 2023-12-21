@@ -93,6 +93,7 @@ namespace godot
         bool import_from_json(String import_path);
         bool export_to_json(String export_path);
 
+		bool import_from_json_text(String json_string);
 		String export_to_json_text();
 
         int get_autocommit() const;
