@@ -1,7 +1,7 @@
 name: 🌈 All Builds
 on:
   push:
-    branches: [ gd-extension ]
+    branches: [ master ]
     tags:
       - "v*"
 
@@ -12,6 +12,8 @@ env:
   TARGET_NAME: libgdsqlite
   VAR_PATH: .github/workflows/build_var.json
   SCONS_CACHE: ${{ github.workspace }}/.scons-cache/
+  EM_VERSION: 3.1.39
+  EM_CACHE_FOLDER: "emsdk-cache"
 
 jobs:
   matrix:
@@ -21,7 +23,7 @@ jobs:
       matrix-json: ${{ steps.set-matrix.outputs.matrix }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - id: set-matrix
         shell: pwsh
         # Use a small PowerShell script to generate the build matrix
@@ -38,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           lfs: true
           submodules: recursive
@@ -51,12 +53,26 @@ jobs:
 
       # Use python 3.x release (works cross platform; best to keep self contained in it's own step)
       - name: Set up Python 3.x
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           # Semantic version range syntax or exact version of a Python version
           python-version: '3.x'
           # Optional - x64 or x86 architecture, defaults to x64
           architecture: 'x64'
+
+      - name: Android dependencies
+        if: ${{ matrix.platform == 'android' }}
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r23c
+          link-to-sdk: true
+
+      - name: Web dependencies
+        if: ${{ matrix.platform == 'web' }}
+        uses: mymindstorm/setup-emsdk@v13
+        with:
+          version: ${{ env.EM_VERSION }}
+          actions-cache-folder: ${{ env.EM_CACHE_FOLDER }}-${{ matrix.target }}
 
       # Setup scons, print python version and scons version info, so if anything is broken it won't run the build.
       - name: Configuring Python packages
@@ -88,7 +104,7 @@ jobs:
           ARTIFACT_FOLDER: ${{ env.PROJECT_FOLDER }}/${{ env.TARGET_PATH }}
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.platform}}
+          name: ${{ matrix.platform }}
           path: ${{ env.ARTIFACT_FOLDER }}*.${{ matrix.artifact-extension }}
           if-no-files-found: error
 
@@ -100,7 +116,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           lfs: true
           submodules: recursive
